@@ -1,0 +1,35 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Virtual environments
+env/
+venv/
+.venv/
+
+# Data & logs
+data/
+*.csv
+*.tsv
+*.json
+*.xls
+*.xlsx
+*.parquet
+*.log
+
+# Models
+*.h5
+*.hdf5
+*.pkl
+*.joblib
+*.pth
+*.pt
+
+# OS files
+.DS_Store
+Thumbs.db
