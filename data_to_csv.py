@@ -21,11 +21,10 @@ full_df = pd.concat([split_to_df(ds["train"]),
                      split_to_df(ds["test"])],
                     ignore_index=True)
 
-# --- (Optional) Add one-hot columns for each emotion ---
+
 for lab in label_names:
     full_df[lab] = full_df["labels"].apply(lambda s: int(lab in s.split("|")))
 
-# --- Save single CSV ---
 out_path = "goemotions_full.csv"
 full_df.to_csv(out_path, index=False)
 print(f"Saved: {out_path} | Rows: {len(full_df)} | Columns: {len(full_df.columns)}")
