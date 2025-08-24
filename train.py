@@ -1,98 +1,84 @@
 import pandas as pd
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
-from datasets import Dataset
 from transformers import (
     AutoTokenizer,
     AutoModelForSequenceClassification,
+    Trainer,
     TrainingArguments,
-    Trainer
 )
-import evaluate
+import torch
+from datasets import Dataset
 
-from transformers import TrainingArguments
-
-training_args = TrainingArguments(
-    output_dir="./results",
-    evaluation_strategy="epoch",   # ✅ valid
-    learning_rate=2e-5,
-    per_device_train_batch_size=16,
-    per_device_eval_batch_size=16,
-    num_train_epochs=3,
-    weight_decay=0.01,
-    logging_dir="./logs",
-    logging_steps=10,
-    save_strategy="epoch"
-)
-
+# 1. Loaded dataset
 df = pd.read_csv("goemotions_clean.csv")
 
+# Ensured correct column names 
+if "final_label" not in df.columns:
+    raise ValueError(" 'final_label' column not found. Did you run merge.py first?")
 
+# 2. Encoded labels
 label_encoder = LabelEncoder()
 df["label_id"] = label_encoder.fit_transform(df["final_label"])
 
-dataset = Dataset.from_pandas(df[["comment", "label_id"]])
+# 3. Train-test split
+train_texts, val_texts, train_labels, val_labels = train_test_split(
+    df["comment"].tolist(), df["label_id"].tolist(), test_size=0.2, random_state=42
+)
 
-
-dataset = dataset.train_test_split(test_size=0.2, seed=42)
-
-model_name = "prajjwal1/bert-tiny"
+# 4. Load tokenizer + model
+model_name = "prajjwal1/bert-tiny"  # Tiny BERT
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-def tokenize_fn(batch):
-    return tokenizer(batch["comment"], padding="max_length", truncation=True, max_length=128)
+train_encodings = tokenizer(train_texts, truncation=True, padding=True, max_length=128)
+val_encodings = tokenizer(val_texts, truncation=True, padding=True, max_length=128)
 
-tokenized_datasets = dataset.map(tokenize_fn, batched=True)
+# 5. Convert to HuggingFace Dataset
+train_dataset = Dataset.from_dict({
+    "input_ids": train_encodings["input_ids"],
+    "attention_mask": train_encodings["attention_mask"],
+    "labels": train_labels
+})
 
+val_dataset = Dataset.from_dict({
+    "input_ids": val_encodings["input_ids"],
+    "attention_mask": val_encodings["attention_mask"],
+    "labels": val_labels
+})
 
+# 6. Load model
 model = AutoModelForSequenceClassification.from_pretrained(
-    model_name,
-    num_labels=len(label_encoder.classes_)
+    model_name, num_labels=len(label_encoder.classes_)
 )
 
-
+# 7. Training arguments ( removed evaluation_strategy)
 training_args = TrainingArguments(
     output_dir="./results",
-    evaluation_strategy="epoch",
-    save_strategy="epoch",
-    learning_rate=3e-5,
-    per_device_train_batch_size=32,
-    per_device_eval_batch_size=32,
-    num_train_epochs=3,
+    save_strategy="epoch",          
+    learning_rate=2e-5,
+    per_device_train_batch_size=16,
+    per_device_eval_batch_size=16,
+    num_train_epochs=2,
     weight_decay=0.01,
     logging_dir="./logs",
-    logging_steps=50,
-    load_best_model_at_end=True,
-    metric_for_best_model="f1",
-    greater_is_better=True,
+    logging_steps=10,
+    push_to_hub=False,
 )
 
-
-accuracy = evaluate.load("accuracy")
-precision = evaluate.load("precision")
-recall = evaluate.load("recall")
-f1 = evaluate.load("f1")
-
-def compute_metrics(eval_pred):
-    logits, labels = eval_pred
-    preds = logits.argmax(axis=-1)
-    return {
-        "accuracy": accuracy.compute(predictions=preds, references=labels)["accuracy"],
-        "precision": precision.compute(predictions=preds, references=labels, average="weighted")["precision"],
-        "recall": recall.compute(predictions=preds, references=labels, average="weighted")["recall"],
-        "f1": f1.compute(predictions=preds, references=labels, average="weighted")["f1"],
-    }
-
-
+# 8. Trainer 
 trainer = Trainer(
     model=model,
     args=training_args,
-    train_dataset=tokenized_datasets["train"],
-    eval_dataset=tokenized_datasets["test"],
+    train_dataset=train_dataset,
     tokenizer=tokenizer,
-    compute_metrics=compute_metrics,
 )
 
-
+# 9. Train
 trainer.train()
 
+# Save model + label encoder
+trainer.save_model("./tinybert_reddit")
+import joblib
+joblib.dump(label_encoder, "label_encoder.pkl")
 
+print(" Training complete! Model saved to ./tinybert_reddit")
