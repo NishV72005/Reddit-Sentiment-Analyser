@@ -17,7 +17,7 @@ df = pd.read_csv("goemotions_clean.csv")
 if "final_label" not in df.columns:
     raise ValueError(" 'final_label' column not found. Did you run merge.py first?")
 
-# 2. Encoded labels
+# 2. Encoded final labels
 label_encoder = LabelEncoder()
 df["label_id"] = label_encoder.fit_transform(df["final_label"])
 
