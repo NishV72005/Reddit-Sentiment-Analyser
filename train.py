@@ -76,7 +76,7 @@ trainer = Trainer(
 # 9. Train
 trainer.train()
 
-# Save model + label encoder
+# Save model + label 
 trainer.save_model("./tinybert_reddit")
 import joblib
 joblib.dump(label_encoder, "label_encoder.pkl")
