@@ -3,20 +3,16 @@ import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import pandas as pd
 
-# =========================
-# Load Model & Tokenizer
-# =========================
-model_path = "tinybert_reddit"   # folder with config.json, model.safetensors, etc.
+
+model_path = "tinybert_reddit"   
 tokenizer = AutoTokenizer.from_pretrained(model_path)
 model = AutoModelForSequenceClassification.from_pretrained(model_path)
 model.eval()
 
-# =========================
-# Load Clean Emotion Labels
-# =========================
-df = pd.read_csv("goemotions_clean.csv")   # path to your training dataset
 
-# Split multi-label entries like "Anger, Neutral" → ["Anger", "Neutral"]
+df = pd.read_csv("goemotions_clean.csv")   
+
+# Splited multi-label entries like "Anger, Neutral" → ["Anger", "Neutral"]
 all_labels = set()
 for item in df["final_label"].dropna():
     for lbl in str(item).split(","):
@@ -24,16 +20,14 @@ for item in df["final_label"].dropna():
 
 emotion_classes = sorted(list(all_labels))
 
-# ✅ Safety check: labels vs model outputs
+
 if len(emotion_classes) != model.config.num_labels:
     raise ValueError(
         f"Label count ({len(emotion_classes)}) does not match model outputs ({model.config.num_labels}). "
         "Please check label extraction or training setup."
     )
 
-# =========================
-# Inference Function
-# =========================
+
 def predict_emotion(text: str) -> str:
     """Predict the single most probable emotion for a given text."""
     inputs = tokenizer(
@@ -51,9 +45,8 @@ def predict_emotion(text: str) -> str:
 
     return emotion_classes[predicted_class]
 
-# =========================
 # Example Usage
-# =========================
+
 if __name__ == "__main__":
     samples = [
         "I am really happy with how my day went!",
