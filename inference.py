@@ -1,35 +1,71 @@
+# inference.py
 import torch
-import pandas as pd
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
+import pandas as pd
 
-# 1. Load model + tokenizer from your trained folder
-model_path = "./tinybert_reddit"   # <- your model folder
+# =========================
+# Load Model & Tokenizer
+# =========================
+model_path = "tinybert_reddit"   # folder with config.json, model.safetensors, etc.
 tokenizer = AutoTokenizer.from_pretrained(model_path)
 model = AutoModelForSequenceClassification.from_pretrained(model_path)
-
-# Put model in evaluation mode
 model.eval()
 
-# 2. Example inputs (replace with your test data or load from CSV)
-texts = [
-    "I am very happy today!",
-    "This is the worst day ever.",
-    "I feel excited about the project."
-]
+# =========================
+# Load Clean Emotion Labels
+# =========================
+df = pd.read_csv("goemotions_clean.csv")   # path to your training dataset
 
-# 3. Tokenized inputs
-encodings = tokenizer(texts, padding=True, truncation=True, return_tensors="pt")
+# Split multi-label entries like "Anger, Neutral" → ["Anger", "Neutral"]
+all_labels = set()
+for item in df["final_label"].dropna():
+    for lbl in str(item).split(","):
+        all_labels.add(lbl.strip())
 
-# 4. Run inference
-with torch.no_grad():
-    outputs = model(**encodings)
-    predictions = torch.argmax(outputs.logits, dim=-1).tolist()
+emotion_classes = sorted(list(all_labels))
 
-# 5. Save results in CSV
-df = pd.DataFrame({
-    "text": texts,
-    "prediction": predictions
-})
-df.to_csv("inference_results.csv", index=False)
+# ✅ Safety check: labels vs model outputs
+if len(emotion_classes) != model.config.num_labels:
+    raise ValueError(
+        f"Label count ({len(emotion_classes)}) does not match model outputs ({model.config.num_labels}). "
+        "Please check label extraction or training setup."
+    )
 
-print(" Predictions saved to inference_results.csv")
+# =========================
+# Inference Function
+# =========================
+def predict_emotion(text: str) -> str:
+    """Predict the single most probable emotion for a given text."""
+    inputs = tokenizer(
+        text,
+        return_tensors="pt",
+        truncation=True,
+        padding=True,
+        max_length=128
+    )
+
+    with torch.no_grad():
+        outputs = model(**inputs)
+        probs = torch.nn.functional.softmax(outputs.logits, dim=-1)
+        predicted_class = torch.argmax(probs, dim=1).item()
+
+    return emotion_classes[predicted_class]
+
+# =========================
+# Example Usage
+# =========================
+if __name__ == "__main__":
+    samples = [
+        "I am really happy with how my day went!",
+        "This is the worst experience I’ve ever had.",
+        "Feeling anxious about tomorrow’s exam.",
+        "Wow, that news was so exciting!",
+        "I don’t really care anymore."
+    ]
+    
+    print("Available Emotion Classes:", emotion_classes, "\n")
+    
+    for text in samples:
+        label = predict_emotion(text)
+        print(f"Text: {text}")
+        print(f"Predicted Emotion: {label}\n")
