@@ -53,4 +53,4 @@ if st.button("Analyze"):
                      title="Prediction Probabilities", text_auto=".2f")
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.warning(" Please enter a comment before analyzing.")
+        st.warning("Please enter a comment before analyzing.")
