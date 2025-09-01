@@ -1,136 +1,92 @@
 import pandas as pd
-import numpy as np
-import torch
-from torch.utils.data import Dataset
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
-from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+import torch
 from transformers import (
-    BertTokenizerFast,
-    BertForSequenceClassification,
-    TrainingArguments,
-    Trainer
+    AutoTokenizer,
+    AutoModelForSequenceClassification,
+    Trainer,
+    TrainingArguments
 )
+from datasets import Dataset
 
-# =====================
-# 1. Load & preprocess
-# =====================
-df = pd.read_csv("reddit_comments.csv")
+# ======================
+# Load dataset
+# ======================
+df = pd.read_csv("goemotions_full.csv")
 
-# Drop rows with missing labels
-df = df.dropna(subset=["comment", "final_label"])
-
-# Handle multi-label rows: take the first label only
-df["final_label"] = df["final_label"].apply(lambda x: x.split(",")[0].strip())
+# Make sure label column exists
+if "final_label" not in df.columns:
+    raise ValueError(" 'final_label' column not found in CSV. Please run merge.py first.")
 
 # Encode labels
-le = LabelEncoder()
-df["label"] = le.fit_transform(df["final_label"])
-num_labels = len(le.classes_)
+label_encoder = LabelEncoder()
+df["label_id"] = label_encoder.fit_transform(df["final_label"])
 
-print("Classes:", list(le.classes_))
-print("Counts:", df["label"].value_counts().to_dict())
-
-# Train/validation split
+# Split dataset
 train_texts, val_texts, train_labels, val_labels = train_test_split(
-    df["comment"].tolist(), df["label"].tolist(), test_size=0.2, random_state=42, stratify=df["label"]
+    df["comment"].tolist(),
+    df["label_id"].tolist(),
+    test_size=0.2,
+    random_state=42
 )
 
-# =====================
-# 2. Dataset class
-# =====================
-class RedditDataset(Dataset):
-    def __init__(self, texts, labels, tokenizer, max_len=128):
-        self.texts = texts
-        self.labels = labels
-        self.tokenizer = tokenizer
-        self.max_len = max_len
+# ======================
+# Tokenizer
+# ======================
+model_name = "prajjwal1/bert-tiny"   # very small & fast BERT
+tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-    def __len__(self):
-        return len(self.texts)
+def tokenize(batch):
+    return tokenizer(batch["text"], padding="max_length", truncation=True, max_length=128)
 
-    def __getitem__(self, idx):
-        encoding = self.tokenizer(
-            self.texts[idx],
-            padding="max_length",
-            truncation=True,
-            max_length=self.max_len,
-            return_tensors="pt"
-        )
-        item = {key: val.squeeze(0) for key, val in encoding.items()}
-        item["labels"] = torch.tensor(self.labels[idx], dtype=torch.long)
-        return item
+train_dataset = Dataset.from_dict({"text": train_texts, "labels": train_labels})
+val_dataset = Dataset.from_dict({"text": val_texts, "labels": val_labels})
 
-# =====================
-# 3. Tokenizer & datasets
-# =====================
-tokenizer = BertTokenizerFast.from_pretrained("prajjwal1/bert-tiny")
+train_dataset = train_dataset.map(tokenize, batched=True)
+val_dataset = val_dataset.map(tokenize, batched=True)
 
-train_dataset = RedditDataset(train_texts, train_labels, tokenizer)
-val_dataset = RedditDataset(val_texts, val_labels, tokenizer)
+train_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
+val_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
 
-# =====================
-# 4. Model
-# =====================
-model = BertForSequenceClassification.from_pretrained(
-    "prajjwal1/bert-tiny", num_labels=num_labels
-)
+# ======================
+# Model
+# ======================
+num_labels = len(label_encoder.classes_)
+model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=num_labels)
 
-# =====================
-# 5. Class Weights
-# =====================
-class_counts = np.bincount(train_labels)
-total_samples = len(train_labels)
-weights = total_samples / (num_labels * class_counts)
-class_weights = torch.tensor(weights, dtype=torch.float).to("cuda" if torch.cuda.is_available() else "cpu")
-
-print("Class weights:", class_weights)
-
-# =====================
-# 6. Custom Trainer with weighted loss
-# =====================
-class WeightedTrainer(Trainer):
-    def compute_loss(self, model, inputs, return_outputs=False):
-        labels = inputs.get("labels")
-        outputs = model(**inputs)
-        logits = outputs.get("logits")
-        loss_fct = torch.nn.CrossEntropyLoss(weight=class_weights)
-        loss = loss_fct(logits.view(-1, model.config.num_labels), labels.view(-1))
-        return (loss, outputs) if return_outputs else loss
-
-# =====================
-# 7. Metrics
-# =====================
-def compute_metrics(eval_pred):
-    logits, labels = eval_pred
-    preds = np.argmax(logits, axis=1)
-    precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average="weighted")
-    acc = accuracy_score(labels, preds)
-    return {"accuracy": acc, "precision": precision, "recall": recall, "f1": f1}
-
-# =====================
-# 8. TrainingArguments
-# =====================
+# ======================
+# Training Arguments
+# ======================
 training_args = TrainingArguments(
     output_dir="./results",
-    evaluation_strategy="epoch",
-    save_strategy="epoch",
+    eval_strategy="epoch",      # use eval at each epoch
+    save_strategy="epoch",      # save checkpoints per epoch
     learning_rate=2e-5,
     per_device_train_batch_size=16,
     per_device_eval_batch_size=16,
-    num_train_epochs=5,
+    num_train_epochs=3,
     weight_decay=0.01,
     logging_dir="./logs",
     logging_steps=50,
+    save_total_limit=2,
     load_best_model_at_end=True,
-    metric_for_best_model="f1",
-    push_to_hub=False
+    metric_for_best_model="accuracy",
+    report_to="none"  # disable wandb / hf reporting
 )
 
-# =====================
-# 9. Trainer
-# =====================
-trainer = WeightedTrainer(
+# ======================
+# Trainer
+# ======================
+def compute_metrics(pred):
+    from sklearn.metrics import accuracy_score, f1_score
+    labels = pred.label_ids
+    preds = pred.predictions.argmax(-1)
+    acc = accuracy_score(labels, preds)
+    f1 = f1_score(labels, preds, average="weighted")
+    return {"accuracy": acc, "f1": f1}
+
+trainer = Trainer(
     model=model,
     args=training_args,
     train_dataset=train_dataset,
@@ -139,9 +95,17 @@ trainer = WeightedTrainer(
     compute_metrics=compute_metrics,
 )
 
-# =====================
-# 10. Train & Evaluate
-# =====================
+
 trainer.train()
-metrics = trainer.evaluate()
-print("Validation metrics:", metrics)
+
+
+save_dir = "./tinybert_reddit"
+model.save_pretrained(save_dir)
+tokenizer.save_pretrained(save_dir)
+
+# Save label mapping
+import json
+with open(f"{save_dir}/label_encoder.json", "w") as f:
+    json.dump({i: label for i, label in enumerate(label_encoder.classes_)}, f)
+
+print(" Training complete. Model saved at", save_dir)
