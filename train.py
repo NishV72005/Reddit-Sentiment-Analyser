@@ -31,9 +31,7 @@ train_texts, val_texts, train_labels, val_labels = train_test_split(
     random_state=42
 )
 
-# ======================
-# Tokenizer
-# ======================
+
 model_name = "prajjwal1/bert-tiny"   # very small & fast BERT
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 
@@ -49,19 +47,15 @@ val_dataset = val_dataset.map(tokenize, batched=True)
 train_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
 val_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
 
-# ======================
-# Model
-# ======================
+
 num_labels = len(label_encoder.classes_)
 model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=num_labels)
 
-# ======================
-# Training Arguments
-# ======================
+
 training_args = TrainingArguments(
     output_dir="./results",
-    eval_strategy="epoch",      # use eval at each epoch
-    save_strategy="epoch",      # save checkpoints per epoch
+    eval_strategy="epoch",      # used eval at each epoch
+    save_strategy="epoch",      
     learning_rate=2e-5,
     per_device_train_batch_size=16,
     per_device_eval_batch_size=16,
@@ -72,12 +66,10 @@ training_args = TrainingArguments(
     save_total_limit=2,
     load_best_model_at_end=True,
     metric_for_best_model="accuracy",
-    report_to="none"  # disable wandb / hf reporting
+    report_to="none"  
 )
 
-# ======================
-# Trainer
-# ======================
+
 def compute_metrics(pred):
     from sklearn.metrics import accuracy_score, f1_score
     labels = pred.label_ids
