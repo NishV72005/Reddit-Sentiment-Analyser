@@ -10,9 +10,8 @@ from transformers import (
 )
 from datasets import Dataset
 
-# ======================
-# Load dataset
-# ======================
+
+# Loaded dataset using goemeotions_full csv file
 df = pd.read_csv("goemotions_full.csv")
 
 # Make sure label column exists
